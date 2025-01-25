@@ -18,6 +18,9 @@ struct Velocity(Vec2);
 #[derive(Component)]
 struct Bubble;
 
+#[derive(Component)]
+struct Environment;
+
 #[derive(Resource)]
 struct BubbleSpawnTimer(Timer);
 
@@ -26,6 +29,9 @@ struct BubbleResource(Mesh3d, MeshMaterial3d<StandardMaterial>);
 
 #[derive(Resource)]
 struct AssetsLoading(HashMap<String, Handle<Gltf>>);
+
+#[derive(Component)]
+struct Background;
 
 fn main() {
     App::new()
@@ -55,7 +61,7 @@ fn on_asset_loaded (
     asset_server: Res<AssetServer>,
     gltf_assets: Res<Assets<Gltf>>,
     assets_loading: ResMut<AssetsLoading>,
-    player_entity: Query<Entity, With<Player>>
+    player_entity: Single<Entity, With<Player>>
 )
 {
     let assets_loading = assets_loading.into_inner();
@@ -77,13 +83,43 @@ fn on_asset_loaded (
                     
                     let asset_name = gltf_handle.0.to_string();
                     match asset_name.as_str() {
+
                         "player_character" => { 
+                            let player_character_id = commands.
+                            spawn((
+                                SceneRoot(gltf_asset.default_scene.clone().unwrap()),
+                                Transform::from_scale(Vec3::splat(0.3_f32)),
+                            )).id();
+
                             commands
-                            .entity(player_entity.single())
-                            .insert(
-                        SceneRoot(gltf_asset.default_scene.clone().unwrap())
-                            );},
-                        "alge" => { info!("alge isn't handled yet")},
+                            .entity(*player_entity)
+                            .add_child(player_character_id);                        
+                        },
+
+                        "alge" => { 
+                            for n in 0..12
+                            {
+                                commands.spawn((
+                                    Environment,
+                                    SceneRoot(gltf_asset.default_scene.clone().unwrap()),
+                                    Transform::from_xyz(
+                                        0.0_f32 + (n % 4) as f32,                                         
+                                        0.0_f32,
+                                        0.0_f32 + (n % 3) as f32, 
+                                    ).with_scale(Vec3::splat(0.3_f32)),
+                                ));
+                            }
+                        },
+
+                        "sand_red" => {
+                            commands.spawn(
+                                (
+                                    Background,
+                                    Transform::from_xyz(0.0_f32, 0.0_f32, 0.0_f32),
+
+                                ));
+                            },
+
                         _ => warn!("asset name was mepty")
                     };
         
@@ -154,6 +190,7 @@ fn setup(
             [
                 ("player_character".into(), asset_server.load("Player.glb")),
                 ("alge".into(), asset_server.load("Alge.glb")),
+                ("sand_red".into(), asset_server.load("Sand_red.png")),
             ]
         )
     ));
