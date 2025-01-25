@@ -64,16 +64,21 @@ fn on_asset_loaded (
                 if loaded_asset.is_some()
                 {
                     let gltf_asset = loaded_asset.unwrap();                   
-              
                     
-                    commands
-                        .entity(player_entity.single())
-                        .insert(
-                    SceneRoot(gltf_asset.default_scene.clone().unwrap())
-                        );
+                    let asset_name = gltf_handle.0.to_string();
+                    match asset_name.as_str() {
+                        "player_character" => { 
+                            commands
+                            .entity(player_entity.single())
+                            .insert(
+                        SceneRoot(gltf_asset.default_scene.clone().unwrap())
+                            );},
+                        "alge" => { info!("alge isn't handled yet")},
+                        _ => warn!("asset name was mepty")
+                    };
         
                     info!("asset {} spawned", gltf_handle.0);
-                    processed_assets.insert(gltf_handle.0.to_string());
+                    processed_assets.insert(asset_name);
                 }
                 else {
                     warn!("asset {} was none", gltf_handle.0);
@@ -139,6 +144,7 @@ fn setup(
         HashMap::from(            
             [
                 ("player_character".into(), asset_server.load("Player.glb")),
+                ("alge".into(), asset_server.load("Alge.glb")),
             ]
         )
     ));
