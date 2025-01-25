@@ -1,13 +1,12 @@
 use bevy::{
-    math::bounding::{BoundingSphere, IntersectsVolume},
-    prelude::*,
-    color::palettes::css::*,
+    color::palettes::css::*, math::bounding::{BoundingSphere, IntersectsVolume}, prelude::*
 };
+use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 const PLAYER_RADIUS: f32 = 0.5;
-const BUBBLE_RADIUS: f32 = 0.6;
+const BUBBLE_RADIUS: f32 = 0.7;
 static WALL_X_OFFSET: f32 = 2.0;
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
 
@@ -29,8 +28,9 @@ struct BubbleSpawnTimer(Timer);
 #[derive(Resource)]
 struct AssetsLoadingGltf(HashMap<String, Handle<Gltf>>);
 
-#[derive( PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 //the derive above is needed so we can use the enum as a key in the HashMap
+//Debug is for logging
 enum BubbleType {
     Regular, //Oxygon
     Blood, //Death
@@ -39,10 +39,7 @@ enum BubbleType {
 }
 
 #[derive(Resource)]
-struct BubbleMesh(Handle<Mesh>);
-
-#[derive(Resource)]
-struct BubbleMaterials(HashMap<BubbleType, Handle<StandardMaterial>>);
+struct BubbleModels(HashMap<BubbleType, Option<Handle<Scene>>>);
 
 #[derive(Component)]
 struct Background;
@@ -78,6 +75,7 @@ fn on_asset_loaded(
     gltf_assets: Res<Assets<Gltf>>,
     assets_loading: ResMut<AssetsLoadingGltf>,
     player_entity: Single<Entity, With<Player>>,
+    mut bubble_models: ResMut<BubbleModels>,
 ) {
     let assets_loading = assets_loading.into_inner();
     if !assets_loading.0.is_empty() {
@@ -136,7 +134,23 @@ fn on_asset_loaded(
                                 Transform::from_translation(Vec3::splat(0.0_f32)).with_scale(Vec3::splat(ASSET_SCALE)),
                                 SceneRoot(gltf_asset.default_scene.clone().unwrap()),
                             ));
-                        },
+                        }
+
+                        "bubble_rot" => {
+                            bubble_models.0.insert(BubbleType::Blood, gltf_asset.default_scene.clone());
+                        }
+
+                        "bubble_dirt" => {
+                            bubble_models.0.insert(BubbleType::Dirt, gltf_asset.default_scene.clone());
+                        }
+
+                        "bubble_freeze" => {
+                            bubble_models.0.insert(BubbleType::Freeze, gltf_asset.default_scene.clone());
+                        }
+
+                        "bubble_regular" => {
+                            bubble_models.0.insert(BubbleType::Regular, gltf_asset.default_scene.clone());
+                        }
 
                         _ => warn!("asset name was mepty"),
                     };
@@ -161,57 +175,8 @@ fn on_asset_loaded(
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-) { 
-    // create Mesh for all bubbles
-    commands.insert_resource(BubbleMesh(meshes.add(Sphere::new(BUBBLE_RADIUS))));
-    
-    // create Materials for all bubble types
-    let regular_bubble_texture = asset_server.load("Regular Bubble.png");
-    let regular_bubble_material= materials.add(StandardMaterial {
-        base_color_texture: Some(regular_bubble_texture.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });    
-
-    let blood_bubble_texture = asset_server.load("Blood Bubble1.png");
-    let blood_bubble_material= materials.add(StandardMaterial {
-        base_color_texture: Some(blood_bubble_texture.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-
-    let dirt_bubble_texture = asset_server.load("Dirt Bubble.png");
-    let dirt_bubble_material= materials.add(StandardMaterial {
-        base_color_texture: Some(dirt_bubble_texture.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    let freeze_bubble_texture = asset_server.load("Freeze Bubble.png");
-    let freeze_bubble_material= materials.add(StandardMaterial {
-        base_color_texture: Some(freeze_bubble_texture.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-    
-    //store material mapping for the bubbles
-    commands.insert_resource(BubbleMaterials(HashMap::from(
-        [
-            (BubbleType::Regular, regular_bubble_material),
-            (BubbleType::Blood, blood_bubble_material),
-            (BubbleType::Dirt, dirt_bubble_material),
-            (BubbleType::Freeze, freeze_bubble_material),
-        ]
-    )));
-
+) {     
     // create a player entity and the camera
     // we need to do this in setup because the player_movement requires the an entity with
     // a player component Tag and a Transform
@@ -234,12 +199,19 @@ fn setup(
 
     info!("init loading assets...");
 
+    //store material mapping for the bubbles
+    commands.insert_resource(BubbleModels(HashMap::from([])));
+
     //load gltF files
     commands.insert_resource(AssetsLoadingGltf(HashMap::from([
         ("player_character".into(), asset_server.load("Player.glb")),
         ("alge".into(), asset_server.load("Alge.glb")),
         ("sand".into(), asset_server.load("Sand.glb")),
-        ("plateau".into(), asset_server.load("Plateau.glb")),       
+        ("plateau".into(), asset_server.load("Plateau.glb")),    
+        ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),    
+        ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),    
+        ("bubble_freeze".into(), asset_server.load("Bubble Freeze.glb")),    
+        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")),
       
         //("sound_bubble_collection".into(), asset_server.load("collect bubble.flac")),
         //("sound_death".into(), asset_server.load("Death beep.mp3")),
@@ -279,27 +251,33 @@ fn bubble_spawns(
     mut commands: Commands,
     time: Res<Time>,
     mut timer: ResMut<BubbleSpawnTimer>,
-    bubble_materials: Res<BubbleMaterials>,
-    bubble_mesh: Res<BubbleMesh>
+    bubble_models: Res<BubbleModels>,
 ) {
+    //TODO randomize this
+    let bubble_type = BubbleType::Regular;
+
+    if bubble_models.0.get(&bubble_type).is_none()
+    {
+        warn!("no model loaded for bubble type {:?}", &bubble_type);
+    }
+
     let slide_time = 5.0;
     let section_length = 5.0;
     let phase = time.elapsed().as_secs_f32() / slide_time;
     let bubble_spawn_z_offset = (phase - phase.floor()) * section_length;
-
-    //TODO randomize this
-    let bubble_type = BubbleType::Regular;
 
     if timer.0.tick(time.delta()).just_finished() {        
 
         commands.spawn((
             //bubble_res.0.clone(),
             //bubble_res.1.clone(),
-            Transform::from_xyz(-WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset),
+            Transform::from_xyz(-WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset)
+            .with_scale(Vec3::splat(BUBBLE_RADIUS)),
             Bubble,
             Velocity(Vec2::new(1.0, 0.0)),
-            Mesh3d(bubble_mesh.0.clone()),
-            MeshMaterial3d(bubble_materials.0.get(&bubble_type).unwrap().clone()),
+            SceneRoot(
+                bubble_models.0.get(&bubble_type).unwrap().clone().unwrap()
+            ),            
         ));
     }
 }
