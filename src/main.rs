@@ -55,89 +55,81 @@ fn main() {
         .run();
 }
 
-
-fn on_asset_loaded (
+fn on_asset_loaded(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     gltf_assets: Res<Assets<Gltf>>,
     assets_loading: ResMut<AssetsLoading>,
-    player_entity: Single<Entity, With<Player>>
-)
-{
+    player_entity: Single<Entity, With<Player>>,
+) {
     let assets_loading = assets_loading.into_inner();
-    if !assets_loading.0.is_empty()
-    {
+    if !assets_loading.0.is_empty() {
         let mut processed_assets: HashSet<String> = HashSet::from([]);
 
-        for gltf_handle in assets_loading.0.iter()
-        {
-            if asset_server.is_loaded_with_dependencies(gltf_handle.1.id()) 
-            {
+        for gltf_handle in assets_loading.0.iter() {
+            if asset_server.is_loaded_with_dependencies(gltf_handle.1.id()) {
                 info!("spawning asset: {}", gltf_handle.0);
 
-                let loaded_asset =  gltf_assets.get(gltf_handle.1.id());
+                let loaded_asset = gltf_assets.get(gltf_handle.1.id());
 
-                if loaded_asset.is_some()
-                {
-                    let gltf_asset = loaded_asset.unwrap();                   
-                    
+                if loaded_asset.is_some() {
+                    let gltf_asset = loaded_asset.unwrap();
+
                     let asset_name = gltf_handle.0.to_string();
                     match asset_name.as_str() {
-
-                        "player_character" => { 
-                            let player_character_id = commands.
-                            spawn((
-                                SceneRoot(gltf_asset.default_scene.clone().unwrap()),
-                                Transform::from_scale(Vec3::splat(0.3_f32)),
-                            )).id();
+                        "player_character" => {
+                            let player_character_id = commands
+                                .spawn((
+                                    SceneRoot(gltf_asset.default_scene.clone().unwrap()),
+                                    Transform::from_scale(Vec3::splat(0.3_f32)),
+                                ))
+                                .id();
 
                             commands
-                            .entity(*player_entity)
-                            .add_child(player_character_id);                        
-                        },
+                                .entity(*player_entity)
+                                .add_child(player_character_id);
+                        }
 
-                        "alge" => { 
-                            for n in 0..12
-                            {
+                        "alge" => {
+                            for n in 0..12 {
                                 commands.spawn((
                                     Environment,
                                     SceneRoot(gltf_asset.default_scene.clone().unwrap()),
                                     Transform::from_xyz(
-                                        0.0_f32 + (n % 4) as f32,                                         
+                                        0.0_f32 + (n % 4) as f32,
                                         0.0_f32,
-                                        0.0_f32 + (n % 3) as f32, 
-                                    ).with_scale(Vec3::splat(0.3_f32)),
+                                        0.0_f32 + (n % 3) as f32,
+                                    )
+                                    .with_scale(Vec3::splat(0.3_f32)),
                                 ));
                             }
-                        },
+                        }
 
                         "sand_red" => {
-                            commands.spawn(
-                                (
-                                    Background,
-                                    Transform::from_xyz(0.0_f32, 0.0_f32, 0.0_f32),
+                            commands.spawn((
+                                Background,
+                                Transform::from_xyz(0.0_f32, 0.0_f32, 0.0_f32),
+                            ));
+                        }
 
-                                ));
-                            },
-
-                        _ => warn!("asset name was mepty")
+                        _ => warn!("asset name was mepty"),
                     };
-        
+
                     info!("asset {} spawned", gltf_handle.0);
                     processed_assets.insert(asset_name);
-                }
-                else {
+                } else {
                     warn!("asset {} was none", gltf_handle.0);
-                }                        
-            } 
-        }  
-
-        for gltf_handle in processed_assets
-        {
-            assets_loading.0.remove(&gltf_handle);
-            info!("asset {} processed and removed from loading set", gltf_handle);
+                }
+            }
         }
-        
+
+        for gltf_handle in processed_assets {
+            assets_loading.0.remove(&gltf_handle);
+            info!(
+                "asset {} processed and removed from loading set",
+                gltf_handle
+            );
+        }
     }
 }
 
@@ -169,31 +161,24 @@ fn setup(
     ));
 
     // create a player entity and the camera
-    // we need to do this in setup because the player_movement requires the an entity with 
+    // we need to do this in setup because the player_movement requires the an entity with
     // a player component Tag and a Transform
     commands
-    .spawn((
-        Player,
-        Transform::default()
-    ))
-    .with_children(|parent| {
-        parent.spawn((
-            Camera3d::default(),
-            Transform::from_xyz(0.0, 5.0, 3.0).looking_at(camera_direction, Vec3::Y),
-        ));
-    });
+        .spawn((Player, Transform::default()))
+        .with_children(|parent| {
+            parent.spawn((
+                Camera3d::default(),
+                Transform::from_xyz(0.0, 5.0, 3.0).looking_at(camera_direction, Vec3::Y),
+            ));
+        });
 
     info!("init loading player character...");
 
-    commands.insert_resource(AssetsLoading(
-        HashMap::from(            
-            [
-                ("player_character".into(), asset_server.load("Player.glb")),
-                ("alge".into(), asset_server.load("Alge.glb")),
-                ("sand_red".into(), asset_server.load("Sand_red.png")),
-            ]
-        )
-    ));
+    commands.insert_resource(AssetsLoading(HashMap::from([
+        ("player_character".into(), asset_server.load("Player.glb")),
+        ("alge".into(), asset_server.load("Alge.glb")),
+        ("sand_red".into(), asset_server.load("Sand_red.png")),
+    ])));
 
     info!("player character should load now...");
 }
