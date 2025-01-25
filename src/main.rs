@@ -253,8 +253,17 @@ fn bubble_spawns(
     mut timer: ResMut<BubbleSpawnTimer>,
     bubble_models: Res<BubbleModels>,
 ) {
-    //TODO randomize this
-    let bubble_type = BubbleType::Regular;
+    
+    let mut rng = rand::thread_rng();
+    let bubble_type = match rng.gen_range(0..4)
+    {
+        0 => {info!("Regular"); BubbleType::Regular}
+        1 => {info!("Blood"); BubbleType::Blood}
+        2 => {info!("Dirt"); BubbleType::Dirt}
+        3 => {info!("Freeze"); BubbleType::Freeze}
+        _ => {info!("Outside expected range"); BubbleType::Regular}
+
+    };
 
     if bubble_models.0.get(&bubble_type).is_none()
     {
