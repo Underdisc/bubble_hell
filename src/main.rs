@@ -22,6 +22,9 @@ struct Bubble;
 #[derive(Component)]
 struct Environment;
 
+#[derive(Component)]
+struct OxygenLevel(f32);
+
 #[derive(Resource)]
 struct BubbleSpawnTimer(Timer);
 
@@ -83,7 +86,7 @@ fn on_asset_loaded(
 
         for gltf_handle in assets_loading.0.iter() {
             if asset_server.is_loaded_with_dependencies(gltf_handle.1.id()) {
-                info!("spawning asset: {}", gltf_handle.0);
+                info!("handling loaded asset: {}", gltf_handle.0);
 
                 let loaded_asset = gltf_assets.get(gltf_handle.1.id());
 
@@ -182,7 +185,7 @@ fn setup(
     // a player component Tag and a Transform
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
     commands
-        .spawn((Player, Transform::default()))
+        .spawn((Player, OxygenLevel(20.0_f32), Transform::default()))
         .with_children(|parent| {
             parent.spawn((
                 Camera3d::default(),
@@ -195,7 +198,6 @@ fn setup(
             color: WHITE.into(),
             brightness: 1000.0,
         });
-
 
     info!("init loading assets...");
 
@@ -211,14 +213,27 @@ fn setup(
         ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),    
         ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),    
         ("bubble_freeze".into(), asset_server.load("Bubble Freeze.glb")),    
-        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")),
-      
-        //("sound_bubble_collection".into(), asset_server.load("collect bubble.flac")),
-        //("sound_death".into(), asset_server.load("Death beep.mp3")),
-        //("sound_music".into(), asset_server.load("Music.ogg")),
+        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")), 
     ])));
 
     info!("player character should load now...");
+
+    //play music
+    commands.spawn(AudioPlayer::new(
+        asset_server.load("Music.ogg"),
+    ));
+
+    commands.spawn(AudioPlayer::new(
+        asset_server.load("Stereotypische unterwasser Atmo.mp3"),
+    ));
+}
+
+fn reduce_oxygen_level(
+    mut oxygen_level: Single<&OxygenLevel>,
+    time: Res<Time>
+)
+{
+    time.delta_secs();
 }
 
 fn player_movement(
@@ -257,11 +272,11 @@ fn bubble_spawns(
     let mut rng = rand::thread_rng();
     let bubble_type = match rng.gen_range(0..4)
     {
-        0 => {info!("Regular"); BubbleType::Regular}
-        1 => {info!("Blood"); BubbleType::Blood}
-        2 => {info!("Dirt"); BubbleType::Dirt}
-        3 => {info!("Freeze"); BubbleType::Freeze}
-        _ => {info!("Outside expected range"); BubbleType::Regular}
+        0 => {BubbleType::Regular}
+        1 => {BubbleType::Blood}
+        2 => {BubbleType::Dirt}
+        3 => {BubbleType::Freeze}
+        _ => {BubbleType::Regular}
 
     };
 
