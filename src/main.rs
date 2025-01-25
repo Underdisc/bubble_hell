@@ -1,13 +1,35 @@
 use bevy::prelude::*;
 
+const BUBBLE_RADIUS: f32 = 0.2;
+static WALL_X_OFFSET: f32 = 2.0;
+
 #[derive(Component)]
 struct Player;
+
+#[derive(Component)]
+struct Velocity(Vec2);
+
+#[derive(Component)]
+struct Bubble;
+
+#[derive(Resource)]
+struct BubbleSpawnTimer(Timer);
+
+#[derive(Resource)]
+struct BubbleResource(Mesh3d, MeshMaterial3d<StandardMaterial>);
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .insert_resource(BubbleSpawnTimer(Timer::from_seconds(
+            0.5,
+            TimerMode::Repeating,
+        )))
         .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, player_movement)
+        .add_systems(
+            FixedUpdate,
+            (bubble_spawns, move_bubbles, player_movement).chain(),
+        )
         .run();
 }
 
@@ -17,15 +39,17 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
+    let wall_mesh = Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 5.0)));
+    let wall_material = MeshMaterial3d(materials.add(Color::WHITE));
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 5.0))),
-        MeshMaterial3d(materials.add(Color::WHITE)),
-        Transform::from_xyz(-2.0, 0.0, 0.0),
+        wall_mesh.clone(),
+        wall_material.clone(),
+        Transform::from_xyz(WALL_X_OFFSET, 0.0, 0.0),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 5.0))),
-        MeshMaterial3d(materials.add(Color::WHITE)),
-        Transform::from_xyz(2.0, 0.0, 0.0),
+        wall_mesh.clone(),
+        wall_material.clone(),
+        Transform::from_xyz(-WALL_X_OFFSET, 0.0, 0.0),
     ));
 
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
@@ -47,6 +71,11 @@ fn setup(
                 Transform::from_xyz(0.0, 20.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
         });
+
+    commands.insert_resource(BubbleResource(
+        Mesh3d(meshes.add(Sphere::new(BUBBLE_RADIUS))),
+        MeshMaterial3d(materials.add(Color::linear_rgb(0.0, 0.2, 0.7))),
+    ));
 }
 
 fn player_movement(
