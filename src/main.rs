@@ -19,7 +19,7 @@ struct BubbleSpawnTimer(Timer);
 #[derive(Resource)]
 struct BubbleResource(Mesh3d, MeshMaterial3d<StandardMaterial>);
 
-#[derive(Component)]
+#[derive(Resource)]
 struct AssetsLoading(HashSet<Handle<Gltf>>);
 
 fn main() {
@@ -43,15 +43,16 @@ fn on_asset_loaded (
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     gltf_assets: Res<Assets<Gltf>>,
-    mut assets_loading: Query<&mut AssetsLoading>,
+    assets_loading: ResMut<AssetsLoading>,
     player_entity: Query<Entity, With<Player>>
 )
 {
-    if !assets_loading.single().0.is_empty()
+    let assets_loading = assets_loading.into_inner();
+    if !assets_loading.0.is_empty()
     {
         let mut processed_assets: HashSet<Handle<Gltf>> = HashSet::from([]);
 
-        for gltf_handle in assets_loading.single_mut().0.iter()
+        for gltf_handle in assets_loading.0.iter()
         {
             if asset_server.is_loaded_with_dependencies(gltf_handle.id()) 
             {
@@ -80,7 +81,7 @@ fn on_asset_loaded (
 
         for gltf_handle in processed_assets
         {
-            assets_loading.single_mut().0.remove(&gltf_handle);
+            assets_loading.0.remove(&gltf_handle);
             info!("asset processed and removed from loading set");
         }
         
@@ -132,7 +133,7 @@ fn setup(
 
     info!("init loading player character...");
 
-    commands.spawn(AssetsLoading(
+    commands.insert_resource(AssetsLoading(
         HashSet::from(            
             [
                 asset_server.load("Player.glb"),
