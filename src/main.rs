@@ -56,10 +56,10 @@ fn player_movement(
 ) {
     let mut movement: Vec2 = Vec2::new(0.0, 0.0);
     if keyboard_input.pressed(KeyCode::KeyE) {
-        movement += Vec2::new(0.0, 1.0);
+        movement += Vec2::new(0.0, -1.0);
     }
     if keyboard_input.pressed(KeyCode::KeyD) {
-        movement += Vec2::new(0.0, -1.0);
+        movement += Vec2::new(0.0, 1.0);
     }
     if keyboard_input.pressed(KeyCode::KeyS) {
         movement += Vec2::new(-1.0, 0.0);
@@ -72,5 +72,35 @@ fn player_movement(
         movement = time.delta_secs() * speed * Vec2::normalize(movement);
         player_transform.translation.x += movement.x;
         player_transform.translation.z += movement.y;
+    }
+}
+
+fn bubble_spawns(
+    mut commands: Commands,
+    bubble_res: Res<BubbleResource>,
+    time: Res<Time>,
+    mut timer: ResMut<BubbleSpawnTimer>,
+) {
+    let slide_time = 5.0;
+    let section_length = 5.0;
+    let phase = time.elapsed().as_secs_f32() / slide_time;
+    let bubble_spawn_z_offset = (phase - phase.floor()) * section_length;
+    if timer.0.tick(time.delta()).just_finished() {
+        commands.spawn((
+            bubble_res.0.clone(),
+            bubble_res.1.clone(),
+            Transform::from_xyz(WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset), Bubble,
+            Velocity(Vec2::new(1.0, 0.0)),
+        ));
+    }
+}
+
+fn move_bubbles(
+    mut bubble_query: Query<(&mut Transform, &Velocity), With<Bubble>>,
+    time: Res<Time>,
+) {
+    for (mut transform, velocity) in &mut bubble_query {
+        transform.translation.x += velocity.0.x * time.delta_secs();
+        transform.translation.y += velocity.0.y * time.delta_secs();
     }
 }
