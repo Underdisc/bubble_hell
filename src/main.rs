@@ -228,7 +228,6 @@ fn check_collisions(
     for (bubble_entity, bubble_transform) in &bubble_query {
         let bubble_sphere = BoundingSphere::new(bubble_transform.translation, BUBBLE_RADIUS);
         if bubble_sphere.intersects(&player_sphere) {
-            println!("test");
             commands.entity(bubble_entity).despawn();
         }
     }
