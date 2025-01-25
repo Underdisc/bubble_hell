@@ -1,8 +1,12 @@
-use bevy::prelude::*;
+use bevy::{
+    math::bounding::{BoundingSphere, IntersectsVolume},
+    prelude::*,
+};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-const BUBBLE_RADIUS: f32 = 0.2;
+const PLAYER_RADIUS: f32 = 0.5;
+const BUBBLE_RADIUS: f32 = 0.1;
 static WALL_X_OFFSET: f32 = 2.0;
 
 #[derive(Component)]
@@ -33,7 +37,13 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             FixedUpdate,
-            (bubble_spawns, move_bubbles, player_movement).chain(),
+            (
+                bubble_spawns,
+                move_bubbles,
+                player_movement,
+                check_collisions,
+            )
+                .chain(),
         )
         .add_systems(Update, on_asset_loaded)
         .run();
@@ -117,10 +127,9 @@ fn setup(
 
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
 
-        
     commands.insert_resource(BubbleResource(
         Mesh3d(meshes.add(Sphere::new(BUBBLE_RADIUS))),
-        MeshMaterial3d(materials.add(Color::linear_rgb(0.0, 0.2, 0.7))),
+        MeshMaterial3d(materials.add(Color::linear_rgb(0.0, 0.5, 0.7))),
     ));
 
     // create a player entity and the camera
@@ -192,7 +201,8 @@ fn bubble_spawns(
         commands.spawn((
             bubble_res.0.clone(),
             bubble_res.1.clone(),
-            Transform::from_xyz(WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset), Bubble,
+            Transform::from_xyz(-WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset),
+            Bubble,
             Velocity(Vec2::new(1.0, 0.0)),
         ));
     }
@@ -205,5 +215,21 @@ fn move_bubbles(
     for (mut transform, velocity) in &mut bubble_query {
         transform.translation.x += velocity.0.x * time.delta_secs();
         transform.translation.y += velocity.0.y * time.delta_secs();
+    }
+}
+
+fn check_collisions(
+    mut commands: Commands,
+    player_query: Single<&Transform, With<Player>>,
+    bubble_query: Query<(Entity, &Transform), With<Bubble>>,
+) {
+    let player_transform = player_query.into_inner();
+    let player_sphere = BoundingSphere::new(player_transform.translation, PLAYER_RADIUS);
+    for (bubble_entity, bubble_transform) in &bubble_query {
+        let bubble_sphere = BoundingSphere::new(bubble_transform.translation, BUBBLE_RADIUS);
+        if bubble_sphere.intersects(&player_sphere) {
+            println!("test");
+            commands.entity(bubble_entity).despawn();
+        }
     }
 }
