@@ -1,14 +1,27 @@
+use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy::{
-    color::palettes::css::*, math::bounding::{BoundingSphere, IntersectsVolume}, prelude::*
+    color::palettes::css::*,
+    math::bounding::{BoundingSphere, IntersectsVolume},
+    prelude::*,
+    render::mesh::PrimitiveTopology,
 };
 use rand::Rng;
-use std::collections::HashMap;
 use std::collections::HashSet;
+use std::{collections::HashMap, process::CommandArgs};
 
-const PLAYER_RADIUS: f32 = 0.5;
-const BUBBLE_RADIUS: f32 = 0.7;
-static WALL_X_OFFSET: f32 = 2.0;
+const PLAYER_MOVEMENT_SPEED: f32 = 10.0;
+const PLAYER_RADIUS: f32 = 0.35;
+const BUBBLE_RADIUS: f32 = 0.6; //defines size of the bubbles
+const BUBBLE_SPAWN_RADIUS: f32 = 6.0; //defines the radius of the circle on which bubbles are spawned
+const BUBBLE_HOVER_OFFSET: f32 = 0.25; //added to player_translation.y, so bubbles are slightly higher than player mesh; emphasizes transparency
+const BUBBLE_MODEL_COUNT: u32 = 4;
+const BUBBLE_MOVEMENT_SPEED: f32 = 1.0;
+const GAME_OVER_SCREEN_DISTANCE: f32 = 2.0;
+
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
+
+#[derive(Event)]
+struct GameOverEvent;
 
 #[derive(Component)]
 struct Player;
@@ -36,9 +49,9 @@ struct AssetsLoadingGltf(HashMap<String, Handle<Gltf>>);
 //Debug is for logging
 enum BubbleType {
     Regular, //Oxygon
-    Blood, //Death
+    Blood,   //Death
     Dirt,
-    Freeze
+    Freeze,
 }
 
 #[derive(Resource)]
@@ -53,8 +66,9 @@ struct Plateau;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(LogDiagnosticsPlugin::default())
         .insert_resource(BubbleSpawnTimer(Timer::from_seconds(
-            0.5,
+            0.2,
             TimerMode::Repeating,
         )))
         .add_systems(Startup, setup)
@@ -68,7 +82,16 @@ fn main() {
             )
                 .chain(),
         )
-        .add_systems(Update, on_asset_loaded)
+        .add_systems(
+            Update,
+            (
+                on_asset_loaded,
+                reduce_oxygen_level,
+                play_game_over_sound,
+                show_game_over_screen,
+            ),
+        )
+        .add_event::<GameOverEvent>()
         .run();
 }
 
@@ -123,36 +146,46 @@ fn on_asset_loaded(
                             }
                         }
 
-                        "sand" => {                         
+                        "sand" => {
                             commands.spawn((
                                 Background,
                                 SceneRoot(gltf_asset.default_scene.clone().unwrap()),
-                                Transform::from_translation(Vec3::splat(0.0_f32)).with_scale(Vec3::splat(ASSET_SCALE))                             
+                                Transform::from_translation(Vec3::splat(0.0_f32))
+                                    .with_scale(Vec3::splat(ASSET_SCALE)),
                             ));
-                        },
+                        }
 
                         "plateau" => {
                             commands.spawn((
                                 Plateau,
-                                Transform::from_translation(Vec3::splat(0.0_f32)).with_scale(Vec3::splat(ASSET_SCALE)),
+                                Transform::from_translation(Vec3::splat(0.0_f32))
+                                    .with_scale(Vec3::splat(ASSET_SCALE)),
                                 SceneRoot(gltf_asset.default_scene.clone().unwrap()),
                             ));
                         }
 
                         "bubble_rot" => {
-                            bubble_models.0.insert(BubbleType::Blood, gltf_asset.default_scene.clone());
+                            bubble_models
+                                .0
+                                .insert(BubbleType::Blood, gltf_asset.default_scene.clone());
                         }
 
                         "bubble_dirt" => {
-                            bubble_models.0.insert(BubbleType::Dirt, gltf_asset.default_scene.clone());
+                            bubble_models
+                                .0
+                                .insert(BubbleType::Dirt, gltf_asset.default_scene.clone());
                         }
 
                         "bubble_freeze" => {
-                            bubble_models.0.insert(BubbleType::Freeze, gltf_asset.default_scene.clone());
+                            bubble_models
+                                .0
+                                .insert(BubbleType::Freeze, gltf_asset.default_scene.clone());
                         }
 
                         "bubble_regular" => {
-                            bubble_models.0.insert(BubbleType::Regular, gltf_asset.default_scene.clone());
+                            bubble_models
+                                .0
+                                .insert(BubbleType::Regular, gltf_asset.default_scene.clone());
                         }
 
                         _ => warn!("asset name was mepty"),
@@ -176,28 +209,100 @@ fn on_asset_loaded(
     }
 }
 
-fn setup(
-    mut commands: Commands,
+fn play_game_over_sound(
     asset_server: Res<AssetServer>,
-) {     
+    mut game_over_event_reader: EventReader<GameOverEvent>,
+    mut commands: Commands,
+    audio_players: Query<Entity, With<AudioPlayer>>,
+) {
+    //despawn all running AudioPlayers
+    for _event in game_over_event_reader.read() {
+        info!("Game Over - Thanks for dying :-)");
+        for entity in audio_players.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        // spawn the game over sound
+        commands.spawn(AudioPlayer::new(
+            asset_server.load("background rumbling.wav"),
+        ));
+    }
+}
+
+fn show_game_over_screen(
+    mut commands: Commands,
+    mut game_over_event_reader: EventReader<GameOverEvent>,
+    asset_server: Res<AssetServer>,
+    camera_transform: Single<&Transform, With<Camera3d>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    player_entity: Single<Entity, With<Camera>>,
+) {
+    let mut is_game_over = false;
+    for _event in game_over_event_reader.read() {
+        is_game_over = true;
+    }
+
+    if !is_game_over {
+        return;
+    }
+
+    //cannot do this inside the loop because the camera_transform query result is invalidated by into_inner()
+    let camera_transform = camera_transform.into_inner();
+
+    // create quad handlePrimitiveTopology::Qua, asset_usa
+    let screen_mesh_handle = meshes.add(Plane3d::default());
+
+    // create texture handle
+    let texture_handle = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(asset_server.load("Game Over2.png")),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+
+    // calculate camera-attached transform & rotation
+    let screen_location =
+        //camera_transform.translation + camera_transform.forward() * GAME_OVER_SCREEN_DISTANCE;
+        Vec3::from([0.0, 5.0, 0.0]);
+
+    let screen_id = commands
+        .spawn((
+            Mesh3d(screen_mesh_handle.clone()),
+            MeshMaterial3d(texture_handle.clone()),
+            Transform::from_translation(screen_location)
+        ))
+        .id();
+
+    commands
+        .entity(player_entity.into_inner())
+        .add_child(screen_id);
+}
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // create a player entity and the camera
     // we need to do this in setup because the player_movement requires the an entity with
     // a player component Tag and a Transform
-    let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
+    let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, 1.0, 0.0));
     commands
-        .spawn((Player, OxygenLevel(20.0_f32), Transform::default()))
+        .spawn((
+            Player, 
+            OxygenLevel(10.0_f32), 
+            Transform::default(),
+            InheritedVisibility::VISIBLE,
+        ))
         .with_children(|parent| {
             parent.spawn((
                 Camera3d::default(),
-                Transform::from_xyz(0.0, 5.0, 3.0).looking_at(camera_direction, Vec3::Y),
+                Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
         });
 
     // create light
     commands.insert_resource(AmbientLight {
-            color: WHITE.into(),
-            brightness: 1000.0,
-        });
+        color: WHITE.into(),
+        brightness: 1000.0,
+    });
 
     info!("init loading assets...");
 
@@ -209,19 +314,23 @@ fn setup(
         ("player_character".into(), asset_server.load("Player.glb")),
         ("alge".into(), asset_server.load("Alge.glb")),
         ("sand".into(), asset_server.load("Sand.glb")),
-        ("plateau".into(), asset_server.load("Plateau.glb")),    
-        ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),    
-        ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),    
-        ("bubble_freeze".into(), asset_server.load("Bubble Freeze.glb")),    
-        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")), 
+        ("plateau".into(), asset_server.load("Plateau.glb")),
+        ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),
+        ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),
+        (
+            "bubble_freeze".into(),
+            asset_server.load("Bubble Freeze.glb"),
+        ),
+        (
+            "bubble_regular".into(),
+            asset_server.load("Bubble Regular.glb"),
+        ),
     ])));
 
     info!("player character should load now...");
 
     //play music
-    commands.spawn(AudioPlayer::new(
-        asset_server.load("Music.ogg"),
-    ));
+    commands.spawn(AudioPlayer::new(asset_server.load("Music.ogg")));
 
     commands.spawn(AudioPlayer::new(
         asset_server.load("Stereotypische unterwasser Atmo.mp3"),
@@ -229,11 +338,19 @@ fn setup(
 }
 
 fn reduce_oxygen_level(
-    mut oxygen_level: Single<&OxygenLevel>,
-    time: Res<Time>
-)
-{
-    time.delta_secs();
+    mut oxygen_level: Single<&mut OxygenLevel>,
+    time: Res<Time>,
+    mut game_over_event_writer: EventWriter<GameOverEvent>,
+) {
+    if oxygen_level.0 <= 0.0_f32 {
+        return;
+    }
+
+    oxygen_level.0 = oxygen_level.0 - time.delta_secs();
+
+    if oxygen_level.0 < 0.0_f32 {
+        game_over_event_writer.send(GameOverEvent {});
+    }
 }
 
 fn player_movement(
@@ -255,8 +372,7 @@ fn player_movement(
         movement += Vec2::new(1.0, 0.0);
     }
     if Vec2::length_squared(movement) > 0.0 {
-        let speed = 1.0;
-        movement = time.delta_secs() * speed * Vec2::normalize(movement);
+        movement = time.delta_secs() * PLAYER_MOVEMENT_SPEED * Vec2::normalize(movement);
         player_transform.translation.x += movement.x;
         player_transform.translation.z += movement.y;
     }
@@ -267,41 +383,48 @@ fn bubble_spawns(
     time: Res<Time>,
     mut timer: ResMut<BubbleSpawnTimer>,
     bubble_models: Res<BubbleModels>,
+    player_transform: Single<&Transform, With<Player>>,
+    game_over_event_reader: EventReader<GameOverEvent>,
 ) {
-    
+    //do not run until all models are loaded
     let mut rng = rand::thread_rng();
-    let bubble_type = match rng.gen_range(0..4)
-    {
-        0 => {BubbleType::Regular}
-        1 => {BubbleType::Blood}
-        2 => {BubbleType::Dirt}
-        3 => {BubbleType::Freeze}
-        _ => {BubbleType::Regular}
 
+    //randomly decide bubble type
+    let bubble_type = match rng.gen_range(0..4) {
+        0 => BubbleType::Regular,
+        1 => BubbleType::Blood,
+        2 => BubbleType::Dirt,
+        3 => BubbleType::Freeze,
+        _ => BubbleType::Regular,
     };
 
-    if bubble_models.0.get(&bubble_type).is_none()
-    {
+    if bubble_models.0.get(&bubble_type).is_none() {
         warn!("no model loaded for bubble type {:?}", &bubble_type);
     }
 
-    let slide_time = 5.0;
-    let section_length = 5.0;
-    let phase = time.elapsed().as_secs_f32() / slide_time;
-    let bubble_spawn_z_offset = (phase - phase.floor()) * section_length;
+    if timer.0.tick(time.delta()).just_finished() {
+        let player_translation = player_transform.into_inner().translation;
+        let random_rotation = rng.gen::<f32>();
+        let rotation_vector = Rot2::degrees(random_rotation * 360.0);
 
-    if timer.0.tick(time.delta()).just_finished() {        
+        // generate random position on edge of circle around player transform
+        let spawn_location = Vec3::from_array([
+            player_translation.x + rotation_vector.cos * BUBBLE_SPAWN_RADIUS,
+            player_translation.y + BUBBLE_HOVER_OFFSET,
+            player_translation.z + rotation_vector.sin * BUBBLE_SPAWN_RADIUS,
+        ]);
+
+        // calculate movement angle directly at player
+        let bubble_movement_direction = Vec2::from([
+            (player_translation.x - spawn_location.x) * BUBBLE_MOVEMENT_SPEED,
+            (player_translation.z - spawn_location.z) * BUBBLE_MOVEMENT_SPEED,
+        ]);
 
         commands.spawn((
-            //bubble_res.0.clone(),
-            //bubble_res.1.clone(),
-            Transform::from_xyz(-WALL_X_OFFSET, 0.5, 2.5 - bubble_spawn_z_offset)
-            .with_scale(Vec3::splat(BUBBLE_RADIUS)),
+            Transform::from_translation(spawn_location).with_scale(Vec3::splat(BUBBLE_RADIUS)),
             Bubble,
-            Velocity(Vec2::new(1.0, 0.0)),
-            SceneRoot(
-                bubble_models.0.get(&bubble_type).unwrap().clone().unwrap()
-            ),            
+            Velocity(bubble_movement_direction),
+            SceneRoot(bubble_models.0.get(&bubble_type).unwrap().clone().unwrap()),
         ));
     }
 }
@@ -310,9 +433,10 @@ fn move_bubbles(
     mut bubble_query: Query<(&mut Transform, &Velocity), With<Bubble>>,
     time: Res<Time>,
 ) {
+    //note: bubbles move on the x-z-plane; with x pointing right and z pointing up
     for (mut transform, velocity) in &mut bubble_query {
         transform.translation.x += velocity.0.x * time.delta_secs();
-        transform.translation.y += velocity.0.y * time.delta_secs();
+        transform.translation.z += velocity.0.y * time.delta_secs();
     }
 }
 
@@ -327,7 +451,6 @@ fn check_collisions(
         let bubble_sphere = BoundingSphere::new(bubble_transform.translation, BUBBLE_RADIUS);
         if bubble_sphere.intersects(&player_sphere) {
             commands.entity(bubble_entity).despawn();
-            //TODO play sound effect
         }
     }
 }
