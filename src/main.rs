@@ -15,6 +15,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 5.0))),
@@ -28,17 +29,22 @@ fn setup(
     ));
 
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
-    commands
+
+        commands
         .spawn((
-            Mesh3d(meshes.add(Sphere::new(0.1))),
-            MeshMaterial3d(materials.add(Color::BLACK)),
-            Transform::from_xyz(0.0, 0.0, 0.0),
             Player,
+            SceneRoot(
+            asset_server.load(
+                GltfAssetLabel::Scene(0)
+                    .from_asset("Player.glb"),
+                ),
+            ),
+            Transform::from_scale(Vec3::from((0.1_f32, 0.1_f32, 0.1_f32)))
         ))
         .with_children(|parent| {
             parent.spawn((
                 Camera3d::default(),
-                Transform::from_xyz(0.0, 3.0, 3.0).looking_at(camera_direction, Vec3::Y),
+                Transform::from_xyz(0.0, 20.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
         });
 }
