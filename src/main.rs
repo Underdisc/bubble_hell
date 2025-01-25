@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use std::{collections::HashSet, os::windows::process};
 
 const BUBBLE_RADIUS: f32 = 0.2;
 static WALL_X_OFFSET: f32 = 2.0;
@@ -18,6 +19,9 @@ struct BubbleSpawnTimer(Timer);
 #[derive(Resource)]
 struct BubbleResource(Mesh3d, MeshMaterial3d<StandardMaterial>);
 
+#[derive(Component)]
+struct AssetsLoading(HashSet<Handle<Gltf>>);
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -30,7 +34,57 @@ fn main() {
             FixedUpdate,
             (bubble_spawns, move_bubbles, player_movement).chain(),
         )
+        .add_systems(Update, on_asset_loaded)
         .run();
+}
+
+
+fn on_asset_loaded (
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    gltf_assets: Res<Assets<Gltf>>,
+    mut assets_loading: Query<&mut AssetsLoading>,
+    player_entity: Query<Entity, With<Player>>
+)
+{
+    if !assets_loading.single().0.is_empty()
+    {
+        let mut processed_assets: HashSet<Handle<Gltf>> = HashSet::from([]);
+
+        for gltf_handle in assets_loading.single_mut().0.iter()
+        {
+            if asset_server.is_loaded_with_dependencies(gltf_handle.id()) 
+            {
+                info!("spawning asset...");
+
+                let loaded_asset =  gltf_assets.get(gltf_handle.id());
+
+                if loaded_asset.is_some()
+                {
+                    let gltf_asset = loaded_asset.unwrap();     
+              
+                    commands
+                        .entity(player_entity.single())
+                        .insert(
+                    SceneRoot(gltf_asset.default_scene.clone().unwrap())
+                        );
+        
+                        info!("asset spawned");
+                        processed_assets.insert(gltf_handle.clone());
+                }
+                else {
+                    warn!("an asset was none");
+                }                        
+            } 
+        }  
+
+        for gltf_handle in processed_assets
+        {
+            assets_loading.single_mut().0.remove(&gltf_handle);
+            info!("asset processed and removed from loading set");
+        }
+        
+    }
 }
 
 fn setup(
@@ -46,6 +100,7 @@ fn setup(
         wall_material.clone(),
         Transform::from_xyz(WALL_X_OFFSET, 0.0, 0.0),
     ));
+
     commands.spawn((
         wall_mesh.clone(),
         wall_material.clone(),
@@ -54,28 +109,38 @@ fn setup(
 
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, -1.0, 1.0));
 
-        commands
-        .spawn((
-            Player,
-            SceneRoot(
-            asset_server.load(
-                GltfAssetLabel::Scene(0)
-                    .from_asset("Player.glb"),
-                ),
-            ),
-            Transform::from_scale(Vec3::from((0.1_f32, 0.1_f32, 0.1_f32)))
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Camera3d::default(),
-                Transform::from_xyz(0.0, 20.0, 3.0).looking_at(camera_direction, Vec3::Y),
-            ));
-        });
-
+        
     commands.insert_resource(BubbleResource(
         Mesh3d(meshes.add(Sphere::new(BUBBLE_RADIUS))),
         MeshMaterial3d(materials.add(Color::linear_rgb(0.0, 0.2, 0.7))),
     ));
+
+    // create a player entity and the camera
+    // we need to do this in setup because the player_movement requires the an entity with 
+    // a player component Tag and a Transform
+    commands
+    .spawn((
+        Player,
+        Transform::default()
+    ))
+    .with_children(|parent| {
+        parent.spawn((
+            Camera3d::default(),
+            Transform::from_xyz(0.0, 5.0, 3.0).looking_at(camera_direction, Vec3::Y),
+        ));
+    });
+
+    info!("init loading player character...");
+
+    commands.spawn(AssetsLoading(
+        HashSet::from(            
+            [
+                asset_server.load("Player.glb"),
+            ]
+        )
+    ));
+
+    info!("player character should load now...");
 }
 
 fn player_movement(
