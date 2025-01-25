@@ -1,5 +1,6 @@
 use bevy::prelude::*;
-use std::{collections::HashSet, os::windows::process};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 const BUBBLE_RADIUS: f32 = 0.2;
 static WALL_X_OFFSET: f32 = 2.0;
@@ -20,7 +21,7 @@ struct BubbleSpawnTimer(Timer);
 struct BubbleResource(Mesh3d, MeshMaterial3d<StandardMaterial>);
 
 #[derive(Resource)]
-struct AssetsLoading(HashSet<Handle<Gltf>>);
+struct AssetsLoading(HashMap<String, Handle<Gltf>>);
 
 fn main() {
     App::new()
@@ -50,31 +51,32 @@ fn on_asset_loaded (
     let assets_loading = assets_loading.into_inner();
     if !assets_loading.0.is_empty()
     {
-        let mut processed_assets: HashSet<Handle<Gltf>> = HashSet::from([]);
+        let mut processed_assets: HashSet<String> = HashSet::from([]);
 
         for gltf_handle in assets_loading.0.iter()
         {
-            if asset_server.is_loaded_with_dependencies(gltf_handle.id()) 
+            if asset_server.is_loaded_with_dependencies(gltf_handle.1.id()) 
             {
-                info!("spawning asset...");
+                info!("spawning asset: {}", gltf_handle.0);
 
-                let loaded_asset =  gltf_assets.get(gltf_handle.id());
+                let loaded_asset =  gltf_assets.get(gltf_handle.1.id());
 
                 if loaded_asset.is_some()
                 {
-                    let gltf_asset = loaded_asset.unwrap();     
+                    let gltf_asset = loaded_asset.unwrap();                   
               
+                    
                     commands
                         .entity(player_entity.single())
                         .insert(
                     SceneRoot(gltf_asset.default_scene.clone().unwrap())
                         );
         
-                        info!("asset spawned");
-                        processed_assets.insert(gltf_handle.clone());
+                    info!("asset {} spawned", gltf_handle.0);
+                    processed_assets.insert(gltf_handle.0.to_string());
                 }
                 else {
-                    warn!("an asset was none");
+                    warn!("asset {} was none", gltf_handle.0);
                 }                        
             } 
         }  
@@ -82,7 +84,7 @@ fn on_asset_loaded (
         for gltf_handle in processed_assets
         {
             assets_loading.0.remove(&gltf_handle);
-            info!("asset processed and removed from loading set");
+            info!("asset {} processed and removed from loading set", gltf_handle);
         }
         
     }
@@ -134,9 +136,9 @@ fn setup(
     info!("init loading player character...");
 
     commands.insert_resource(AssetsLoading(
-        HashSet::from(            
+        HashMap::from(            
             [
-                asset_server.load("Player.glb"),
+                ("player_character".into(), asset_server.load("Player.glb")),
             ]
         )
     ));
