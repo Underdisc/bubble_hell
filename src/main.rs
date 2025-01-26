@@ -2,6 +2,7 @@ use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy::{
     audio::*,
     color::palettes::css::*,
+    gltf::GltfMesh,
     math::bounding::{BoundingSphere, IntersectsVolume},
     prelude::*,
 };
@@ -58,6 +59,14 @@ struct IsGameOver(bool);
 struct Player;
 
 #[derive(Component)]
+struct Zeiger;
+
+fn guage_direction() -> Vec3 {
+    let dir = Vec3::normalize(Vec3::new(0.0, 2.0, -0.5));
+    dir
+}
+
+#[derive(Component)]
 struct Velocity(Vec2);
 
 #[derive(Component)]
@@ -110,7 +119,7 @@ fn main() {
             (
                 bubble_spawns,
                 move_bubbles,
-                player_movement,
+                player_effects,
                 check_collisions,
             )
                 .chain(),
@@ -137,6 +146,7 @@ fn on_asset_loaded(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     gltf_assets: Res<Assets<Gltf>>,
+    gltf_meshes: Res<Assets<GltfMesh>>,
     assets_loading: ResMut<AssetsLoadingGltf>,
     player_entity: Single<Entity, With<Player>>,
     mut bubble_models: ResMut<BubbleModels>,
@@ -162,6 +172,7 @@ fn on_asset_loaded(
                                 .spawn((
                                     SceneRoot(gltf_asset.default_scene.clone().unwrap()),
                                     Transform::from_scale(Vec3::splat(ASSET_SCALE)),
+                                    InheritedVisibility::VISIBLE,
                                 ))
                                 .id();
 
@@ -261,6 +272,41 @@ fn on_asset_loaded(
                             bubble_models
                                 .0
                                 .insert(BubbleType::Regular, gltf_asset.default_scene.clone());
+                        }
+
+                        "gauge" => {
+                            let empty_gltf = gltf_meshes
+                                .get(&gltf_asset.named_meshes["Gauge_empty"])
+                                .unwrap();
+                            let empty_prim = &empty_gltf.primitives[0];
+                            let gauge_empty_mesh = empty_prim.mesh.clone();
+                            let gauge_empty_material = empty_prim.material.clone().unwrap();
+
+                            let zeiger_mesh = gltf_meshes.get(&gltf_asset.meshes[1]).unwrap();
+                            let zeiger_prim = &zeiger_mesh.primitives[0];
+                            let zeiger_mesh = zeiger_prim.mesh.clone();
+                            let zeiger_material = zeiger_prim.material.clone().unwrap();
+                            let gauge_id = commands
+                                .spawn((
+                                    Transform::from_xyz(0.0, 3.0, 2.65)
+                                        .looking_at(guage_direction(), Vec3::Y)
+                                        .with_scale(Vec3::ONE * 0.5),
+                                    Mesh3d(gauge_empty_mesh),
+                                    MeshMaterial3d(gauge_empty_material),
+                                ))
+                                .id();
+                            let zeiger_id = commands
+                                .spawn((
+                                    Transform::from_xyz(0.0, 3.1, 2.65)
+                                        .looking_at(guage_direction(), Vec3::Y)
+                                        .with_scale(Vec3::ONE * 0.5),
+                                    Mesh3d(zeiger_mesh),
+                                    MeshMaterial3d(zeiger_material),
+                                    Zeiger,
+                                ))
+                                .id();
+                            commands.entity(*player_entity).add_child(gauge_id);
+                            commands.entity(*player_entity).add_child(zeiger_id);
                         }
 
                         _ => warn!("asset name was mepty"),
@@ -443,6 +489,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             "bubble_regular".into(),
             asset_server.load("Bubble Regular.glb"),
         ),
+        ("gauge".into(), asset_server.load("Gauge.glb")),
     ])));
 
     info!("player character should load now...");
@@ -513,9 +560,10 @@ fn reduce_oxygen_level(
     }
 }
 
-fn player_movement(
+fn player_effects(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_transform: Single<&mut Transform, With<Player>>,
+    player_query: Single<(&mut Transform, &OxygenLevel), With<Player>>,
+    zeiger_query: Option<Single<&mut Transform, (With<Zeiger>, Without<Player>)>>,
     time: Res<Time>,
     is_game_over: Res<IsGameOver>,
     bubble_freeze_effect: Res<BubbleFreezeEffect>,
@@ -538,10 +586,16 @@ fn player_movement(
     if keyboard_input.pressed(KeyCode::KeyF) {
         movement += Vec2::new(1.0, 0.0);
     }
+    let (mut player_transform, oxygen_level) = player_query.into_inner();
     if Vec2::length_squared(movement) > 0.0 {
         movement = time.delta_secs() * PLAYER_MOVEMENT_SPEED * Vec2::normalize(movement);
         player_transform.translation.x += movement.x;
         player_transform.translation.z += movement.y;
+    }
+
+    if let Some(zeiger_query) = zeiger_query {
+        let mut zeiger_transform = zeiger_query.into_inner();
+        zeiger_transform.rotation = Quat::from_axis_angle(guage_direction(), oxygen_level.0);
     }
 }
 
@@ -693,3 +747,4 @@ fn check_collisions(
         }
     }
 }
+
