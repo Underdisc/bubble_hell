@@ -1,5 +1,6 @@
 use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy::{
+    audio::*,
     color::palettes::css::*,
     math::bounding::{BoundingSphere, IntersectsVolume},
     prelude::*,
@@ -26,10 +27,15 @@ const BUBBLE_EFFECT_FREEZE_DURATION: f32 = 0.6;
 struct BubbleFreezeEffect {
     time_remaining: f32,
 }
+#[derive(Component)]
+struct BubbleHitSound;
 
 const GAME_OVER_SCREEN_DISTANCE: f32 = 1.2;
 
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
+
+#[derive(Resource)]
+struct BubbleHitAudioSource(Handle<AudioSource>);
 
 #[derive(Event)]
 struct GameOverEvent;
@@ -112,6 +118,7 @@ fn main() {
                 show_game_over_screen,
                 handle_bubble_hit,
                 run_bubble_freeze_timer,
+                clear_old_sounds,
             ),
         )
         .add_event::<GameOverEvent>()
@@ -407,6 +414,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn(AudioPlayer::new(
         asset_server.load("Stereotypische unterwasser Atmo.mp3"),
     ));
+
+    commands.insert_resource(BubbleHitAudioSource(
+        asset_server.load("collect bubble.flac"),
+    ));
+}
+
+fn clear_old_sounds(
+    mut commands: Commands,
+    bubble_hit_sounds: Query<(&AudioSink, Entity), With<BubbleHitSound>>,
+) {
+    for (sound, entity) in bubble_hit_sounds.iter() {
+        // the audio sink being "empty" means there are not sound effects in it's internal queue for it to play
+        // this happens when a sound is only played once - like the hit effects
+        if sound.empty() {
+            commands.entity(entity).despawn();
+            //info!("despawning sound sink");
+        }
+    }
 }
 
 fn reduce_oxygen_level(
@@ -415,16 +440,17 @@ fn reduce_oxygen_level(
     mut game_over_event_writer: EventWriter<GameOverEvent>,
     mut is_game_over: ResMut<IsGameOver>,
 ) {
-    if oxygen_level.0 <= 0.0_f32 {
+    if is_game_over.0 {
         return;
     }
 
-    oxygen_level.0 = oxygen_level.0 - (time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND);
-    //info!("remaining oxygen: {}", oxygen_level.0);
-
-    if !is_game_over.0 && oxygen_level.0 <= 0.0_f32 {
+    if oxygen_level.0 <= 0.0_f32 {
         game_over_event_writer.send(GameOverEvent {});
         is_game_over.0 = true;
+        return;
+    } else {
+        oxygen_level.0 = oxygen_level.0 - (time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND);
+        info!("remaining oxygen: {}", oxygen_level.0);
     }
 }
 
@@ -512,13 +538,13 @@ fn bubble_spawns(
             Transform::from_translation(spawn_location).with_scale(Vec3::splat(BUBBLE_RADIUS)),
             Velocity(bubble_movement_direction),
             SceneRoot(bubble_models.0.get(&bubble_type).unwrap().clone().unwrap()),
-            MeshMaterial3d::<StandardMaterial>::default(),        
-            PointLight{
+            MeshMaterial3d::<StandardMaterial>::default(),
+            PointLight {
                 color: match &bubble_type {
                     BubbleType::Blood => RED.into(),
                     BubbleType::Dirt => GREEN.into(),
                     BubbleType::Freeze => WHITE.into(),
-                    BubbleType::Regular => YELLOW.into()
+                    BubbleType::Regular => YELLOW.into(),
                 },
                 radius: BUBBLE_RADIUS,
                 intensity: 10_000.0,
@@ -578,13 +604,26 @@ fn check_collisions(
     player_query: Single<&Transform, With<Player>>,
     bubble_query: Query<(Entity, &Transform, &Bubble)>,
     mut bubble_event_write: EventWriter<BubbleHitEvent>,
+    bubble_hit_sound: Query<&AudioSink, With<BubbleHitSound>>,
+    asset_server: Res<AssetServer>,
+    bubble_hit_audio_source: Res<BubbleHitAudioSource>,
 ) {
     let player_transform = player_query.into_inner();
     let player_sphere = BoundingSphere::new(player_transform.translation, PLAYER_RADIUS);
     for (bubble_entity, bubble_transform, bubble) in &bubble_query {
         let bubble_sphere = BoundingSphere::new(bubble_transform.translation, BUBBLE_RADIUS);
         if bubble_sphere.intersects(&player_sphere) {
+            commands.spawn((
+                BubbleHitSound,
+                AudioPlayer::new(bubble_hit_audio_source.0.clone()),
+                PlaybackSettings {
+                    mode: PlaybackMode::Once,
+                    ..default()
+                },
+            ));
+
             commands.entity(bubble_entity).despawn();
+
             info!("hit by bubble of type {:?}", bubble.bubble_type);
             bubble_event_write.send(BubbleHitEvent {
                 bubble_type: match bubble.bubble_type {
