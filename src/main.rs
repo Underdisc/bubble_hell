@@ -663,8 +663,6 @@ fn check_collisions(
     player_query: Single<&Transform, With<Player>>,
     bubble_query: Query<(Entity, &Transform, &Bubble)>,
     mut bubble_event_write: EventWriter<BubbleHitEvent>,
-    bubble_hit_sound: Query<&AudioSink, With<BubbleHitSound>>,
-    asset_server: Res<AssetServer>,
     bubble_hit_audio_source: Res<BubbleHitAudioSource>,
 ) {
     let player_transform = player_query.into_inner();
