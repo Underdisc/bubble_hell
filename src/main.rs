@@ -8,11 +8,16 @@ use bevy::{
 use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::f32::consts::PI;
 
 const PLAYER_MOVEMENT_SPEED: f32 = 7.0;
 const PLAYER_RADIUS: f32 = 0.35;
-const PLAYER_OXYGEN_START_SUPPLY: f32 = 10.0;
+const PLAYER_OXYGEN_START_SUPPLY: f32 = 1000.0;
 const PLAYER_OXYGEN_DECREASE_PER_SECOND: f32 = 1.0;
+
+const PLATEAU_RADIUS: f32 = 4.0;
+const PLATEAU_MINIMUM_PLANTS: u32 = 24;
+const PLATEAU_MAXIMUM_PLANTS: u32 = 64;
 
 const BUBBLE_RADIUS: f32 = 0.6; //defines size of the bubbles
 const BUBBLE_SPAWN_RADIUS: f32 = 6.0; //defines the radius of the circle on which bubbles are spawned
@@ -175,17 +180,42 @@ fn on_asset_loaded(
                         }
 
                         "alge" => {
-                            for n in 0..12 {
+                            let mut rng = rand::thread_rng();
+                            let mut number_of_plants_to_spawn =
+                                rng.gen_range(PLATEAU_MINIMUM_PLANTS..PLATEAU_MAXIMUM_PLANTS);
+                            while number_of_plants_to_spawn > 0 {
+                                let random_rotation = rng.gen::<f32>();
+                                let random_distances =
+                                    Vec2::from([rng.gen::<f32>(), rng.gen::<f32>()]);
+                                let rotation_vector = Rot2::degrees(random_rotation * 360.0);
+
+                                let transform =
+                                    Transform::from_matrix(Mat4::from_scale_rotation_translation(
+                                        Vec3::splat(ASSET_SCALE),
+                                        Quat::from_euler(
+                                            EulerRot::XYZ,
+                                            rng.gen::<f32>() * PI / 0.1,
+                                            rng.gen::<f32>() * PI / 0.3,
+                                            rng.gen::<f32>() * PI / 0.1,
+                                        ),
+                                        Vec3::from([
+                                            rotation_vector.cos
+                                                * random_distances.x
+                                                * PLATEAU_RADIUS,
+                                            0.0_f32, //do not change y unless intentionally letting it hover
+                                            rotation_vector.sin
+                                                * random_distances.y
+                                                * PLATEAU_RADIUS,
+                                        ]),
+                                    ));
+
                                 commands.spawn((
                                     Environment,
                                     SceneRoot(gltf_asset.default_scene.clone().unwrap()),
-                                    Transform::from_xyz(
-                                        -3.0_f32 + (n % 4) as f32,
-                                        0.0_f32,
-                                        -3.0_f32 + (n % 3) as f32,
-                                    )
-                                    .with_scale(Vec3::splat(ASSET_SCALE)),
+                                    transform,
                                 ));
+
+                                number_of_plants_to_spawn -= 1;
                             }
                         }
 
@@ -375,6 +405,14 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         color: ROYAL_BLUE.into(),
         brightness: 100.0,
     });
+
+    /*
+    //FOR DEBUGGING
+    commands.insert_resource(AmbientLight {
+        color: WHITE.into(),
+        brightness: 10_000.0,
+    });
+     */
 
     // create flag resources
     commands.insert_resource(IsGameOver(false));
