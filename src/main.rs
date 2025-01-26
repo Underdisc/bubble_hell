@@ -3,25 +3,28 @@ use bevy::{
     color::palettes::css::*,
     math::bounding::{BoundingSphere, IntersectsVolume},
     prelude::*,
-    render::mesh::PrimitiveTopology,
 };
 use rand::Rng;
+use std::collections::HashMap;
 use std::collections::HashSet;
-use std::{collections::HashMap, process::CommandArgs};
 
 const PLAYER_MOVEMENT_SPEED: f32 = 10.0;
 const PLAYER_RADIUS: f32 = 0.35;
+const PLAYER_OXYGEN_START_SUPPLY: f32 = 2.0;
+const PLAYER_OXYGEN_DECREASE_PER_SECOND: f32 = 1.0;
 const BUBBLE_RADIUS: f32 = 0.6; //defines size of the bubbles
 const BUBBLE_SPAWN_RADIUS: f32 = 6.0; //defines the radius of the circle on which bubbles are spawned
 const BUBBLE_HOVER_OFFSET: f32 = 0.25; //added to player_translation.y, so bubbles are slightly higher than player mesh; emphasizes transparency
-const BUBBLE_MODEL_COUNT: u32 = 4;
 const BUBBLE_MOVEMENT_SPEED: f32 = 1.0;
-const GAME_OVER_SCREEN_DISTANCE: f32 = 2.0;
+const GAME_OVER_SCREEN_DISTANCE: f32 = 1.5;
 
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
 
 #[derive(Event)]
 struct GameOverEvent;
+
+#[derive(Resource)]
+struct IsGameOver(bool);
 
 #[derive(Component)]
 struct Player;
@@ -215,9 +218,9 @@ fn play_game_over_sound(
     mut commands: Commands,
     audio_players: Query<Entity, With<AudioPlayer>>,
 ) {
-    //despawn all running AudioPlayers
     for _event in game_over_event_reader.read() {
         info!("Game Over - Thanks for dying :-)");
+        //despawn all running AudioPlayers
         for entity in audio_players.iter() {
             commands.entity(entity).despawn();
         }
@@ -233,10 +236,9 @@ fn show_game_over_screen(
     mut commands: Commands,
     mut game_over_event_reader: EventReader<GameOverEvent>,
     asset_server: Res<AssetServer>,
-    camera_transform: Single<&Transform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    player_entity: Single<Entity, With<Camera>>,
+    camera_transform: Single<&Transform, With<Camera3d>>,
 ) {
     let mut is_game_over = false;
     for _event in game_over_event_reader.read() {
@@ -246,9 +248,6 @@ fn show_game_over_screen(
     if !is_game_over {
         return;
     }
-
-    //cannot do this inside the loop because the camera_transform query result is invalidated by into_inner()
-    let camera_transform = camera_transform.into_inner();
 
     // create quad handlePrimitiveTopology::Qua, asset_usa
     let screen_mesh_handle = meshes.add(Plane3d::default());
@@ -262,21 +261,25 @@ fn show_game_over_screen(
     });
 
     // calculate camera-attached transform & rotation
+    let camera_transform = camera_transform.into_inner();
     let screen_location =
-        //camera_transform.translation + camera_transform.forward() * GAME_OVER_SCREEN_DISTANCE;
-        Vec3::from([0.0, 5.0, 0.0]);
+        camera_transform.translation + camera_transform.forward() * GAME_OVER_SCREEN_DISTANCE;
 
-    let screen_id = commands
-        .spawn((
-            Mesh3d(screen_mesh_handle.clone()),
-            MeshMaterial3d(texture_handle.clone()),
-            Transform::from_translation(screen_location)
-        ))
-        .id();
+    info!(
+        "camera rotXYZ: {:?}",
+        camera_transform.rotation.to_euler(EulerRot::XYZ)
+    );
 
-    commands
-        .entity(player_entity.into_inner())
-        .add_child(screen_id);
+    commands.spawn((
+        Mesh3d(screen_mesh_handle.clone()),
+        MeshMaterial3d(texture_handle.clone()),
+        Transform::from_translation(screen_location).with_rotation(Quat::from_euler(
+            EulerRot::XYZ,
+            0.4,
+            0.0,
+            0.0,
+        )),
+    ));
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -286,8 +289,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let camera_direction: Vec3 = Vec3::normalize(Vec3::new(0.0, 1.0, 0.0));
     commands
         .spawn((
-            Player, 
-            OxygenLevel(10.0_f32), 
+            Player,
+            OxygenLevel(PLAYER_OXYGEN_START_SUPPLY),
             Transform::default(),
             InheritedVisibility::VISIBLE,
         ))
@@ -296,13 +299,31 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Camera3d::default(),
                 Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
+
+            
+            parent.spawn(
+                (SpotLight {
+                    intensity: 100_000.0,  
+                    range: 100.0,
+                    radius: 5.0, 
+                    inner_angle: 10.0,  
+                    shadows_enabled: true,                                   
+                    ..Default::default()
+                },
+                Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
+            ));
+             
         });
 
     // create light
+    
     commands.insert_resource(AmbientLight {
         color: WHITE.into(),
-        brightness: 1000.0,
+        brightness: 100.0,
     });
+    
+
+    commands.insert_resource(IsGameOver(false));
 
     info!("init loading assets...");
 
@@ -341,15 +362,18 @@ fn reduce_oxygen_level(
     mut oxygen_level: Single<&mut OxygenLevel>,
     time: Res<Time>,
     mut game_over_event_writer: EventWriter<GameOverEvent>,
+    mut is_game_over: ResMut<IsGameOver>,
 ) {
     if oxygen_level.0 <= 0.0_f32 {
         return;
     }
 
-    oxygen_level.0 = oxygen_level.0 - time.delta_secs();
+    oxygen_level.0 = oxygen_level.0 - (time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND);
+    info!("remaining oxygen: {}", oxygen_level.0);
 
-    if oxygen_level.0 < 0.0_f32 {
+    if !is_game_over.0 && oxygen_level.0 <= 0.0_f32 {
         game_over_event_writer.send(GameOverEvent {});
+        is_game_over.0 = true;
     }
 }
 
@@ -357,7 +381,12 @@ fn player_movement(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_transform: Single<&mut Transform, With<Player>>,
     time: Res<Time>,
+    is_game_over: Res<IsGameOver>,
 ) {
+    if is_game_over.0 {
+        return;
+    }
+
     let mut movement: Vec2 = Vec2::new(0.0, 0.0);
     if keyboard_input.pressed(KeyCode::KeyE) {
         movement += Vec2::new(0.0, -1.0);
@@ -384,8 +413,12 @@ fn bubble_spawns(
     mut timer: ResMut<BubbleSpawnTimer>,
     bubble_models: Res<BubbleModels>,
     player_transform: Single<&Transform, With<Player>>,
-    game_over_event_reader: EventReader<GameOverEvent>,
+    is_game_over: Res<IsGameOver>,
 ) {
+    if is_game_over.into_inner().0 {
+        return;
+    }
+
     //do not run until all models are loaded
     let mut rng = rand::thread_rng();
 
@@ -400,6 +433,8 @@ fn bubble_spawns(
 
     if bubble_models.0.get(&bubble_type).is_none() {
         warn!("no model loaded for bubble type {:?}", &bubble_type);
+        //just don't spawn until all models are loaded
+        return;
     }
 
     if timer.0.tick(time.delta()).just_finished() {
