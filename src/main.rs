@@ -61,9 +61,9 @@ struct Player;
 #[derive(Component)]
 struct Zeiger;
 
-fn guage_direction() -> Vec3 {
-    let dir = Vec3::normalize(Vec3::new(0.0, 2.0, -0.5));
-    dir
+fn guage_quat() -> Quat {
+    let quat = Quat::from_axis_angle(Vec3::new(1.0, 0.0, 0.0), 0.0);
+    quat
 }
 
 #[derive(Component)]
@@ -288,8 +288,8 @@ fn on_asset_loaded(
                             let zeiger_material = zeiger_prim.material.clone().unwrap();
                             let gauge_id = commands
                                 .spawn((
-                                    Transform::from_xyz(0.0, 3.0, 2.65)
-                                        .looking_at(guage_direction(), Vec3::Y)
+                                    Transform::from_xyz(0.0, 8.0, 2.8)
+                                        .with_rotation(guage_quat())
                                         .with_scale(Vec3::ONE * 0.5),
                                     Mesh3d(gauge_empty_mesh),
                                     MeshMaterial3d(gauge_empty_material),
@@ -297,8 +297,8 @@ fn on_asset_loaded(
                                 .id();
                             let zeiger_id = commands
                                 .spawn((
-                                    Transform::from_xyz(0.0, 3.1, 2.65)
-                                        .looking_at(guage_direction(), Vec3::Y)
+                                    Transform::from_xyz(0.0, 8.0, 2.8)
+                                        .with_rotation(guage_quat())
                                         .with_scale(Vec3::ONE * 0.5),
                                     Mesh3d(zeiger_mesh),
                                     MeshMaterial3d(zeiger_material),
@@ -523,7 +523,7 @@ fn enforce_plateau_limits(
 
     if player_coordinates_2d.length_squared() > powf(PLATEAU_RADIUS, 2.0) {
         oxygen_level.0 -= time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND;
-    } 
+    }
 }
 
 fn clear_old_sounds(
@@ -556,7 +556,6 @@ fn reduce_oxygen_level(
         return;
     } else {
         oxygen_level.0 -= time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND;
-        info!("remaining oxygen: {}", oxygen_level.0);
     }
 }
 
@@ -595,7 +594,10 @@ fn player_effects(
 
     if let Some(zeiger_query) = zeiger_query {
         let mut zeiger_transform = zeiger_query.into_inner();
-        zeiger_transform.rotation = Quat::from_axis_angle(guage_direction(), oxygen_level.0);
+        let mut angle = (oxygen_level.0 / PLAYER_OXYGEN_START_SUPPLY).clamp(0.0, 1.0);
+        angle = (angle - 0.5) * 2.0;
+        angle *= -3.0 * PI / 4.0;
+        zeiger_transform.rotation = Quat::from_axis_angle(Vec3::Y, angle);
     }
 }
 
@@ -747,4 +749,3 @@ fn check_collisions(
         }
     }
 }
-
