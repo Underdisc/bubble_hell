@@ -10,12 +10,12 @@ use std::collections::HashSet;
 
 const PLAYER_MOVEMENT_SPEED: f32 = 10.0;
 const PLAYER_RADIUS: f32 = 0.35;
-const PLAYER_OXYGEN_START_SUPPLY: f32 = 2.0;
+const PLAYER_OXYGEN_START_SUPPLY: f32 = 100.0;
 const PLAYER_OXYGEN_DECREASE_PER_SECOND: f32 = 1.0;
 const BUBBLE_RADIUS: f32 = 0.6; //defines size of the bubbles
 const BUBBLE_SPAWN_RADIUS: f32 = 6.0; //defines the radius of the circle on which bubbles are spawned
 const BUBBLE_HOVER_OFFSET: f32 = 0.25; //added to player_translation.y, so bubbles are slightly higher than player mesh; emphasizes transparency
-const BUBBLE_MOVEMENT_SPEED: f32 = 1.0;
+const BUBBLE_MOVEMENT_SPEED: f32 = 0.2;
 const GAME_OVER_SCREEN_DISTANCE: f32 = 1.5;
 
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
@@ -299,15 +299,27 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Camera3d::default(),
                 Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
-
             
+            parent.spawn(
+                (SpotLight {                    
+                    color: GREY.into(),
+                    intensity: 500_000.0,  
+                    range: 5.0,
+                    radius: 10.0, 
+                    inner_angle: 80.0,  
+                    shadows_enabled: true,       
+                    ..Default::default()             
+                },
+                Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ));
+
             parent.spawn(
                 (SpotLight {
                     intensity: 100_000.0,  
-                    range: 100.0,
-                    radius: 5.0, 
-                    inner_angle: 10.0,  
-                    shadows_enabled: true,                                   
+                    range: GAME_OVER_SCREEN_DISTANCE * 2.0,
+                    radius: 10.0, 
+                    inner_angle: 1.0,                                    
+                    outer_angle: 100.0,
                     ..Default::default()
                 },
                 Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
@@ -318,11 +330,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // create light
     
     commands.insert_resource(AmbientLight {
-        color: WHITE.into(),
+        color: ROYAL_BLUE.into(),
         brightness: 100.0,
-    });
-    
-
+    }); 
+   
     commands.insert_resource(IsGameOver(false));
 
     info!("init loading assets...");
@@ -338,14 +349,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ("plateau".into(), asset_server.load("Plateau.glb")),
         ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),
         ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),
-        (
-            "bubble_freeze".into(),
-            asset_server.load("Bubble Freeze.glb"),
-        ),
-        (
-            "bubble_regular".into(),
-            asset_server.load("Bubble Regular.glb"),
-        ),
+        ("bubble_freeze".into(), asset_server.load("Bubble Freeze.glb")),
+        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")),
     ])));
 
     info!("player character should load now...");
