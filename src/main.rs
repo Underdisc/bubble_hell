@@ -5,6 +5,7 @@ use bevy::{
     math::bounding::{BoundingSphere, IntersectsVolume},
     prelude::*,
 };
+use ops::powf;
 use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -12,7 +13,7 @@ use std::f32::consts::PI;
 
 const PLAYER_MOVEMENT_SPEED: f32 = 7.0;
 const PLAYER_RADIUS: f32 = 0.35;
-const PLAYER_OXYGEN_START_SUPPLY: f32 = 1000.0;
+const PLAYER_OXYGEN_START_SUPPLY: f32 = 10.0;
 const PLAYER_OXYGEN_DECREASE_PER_SECOND: f32 = 1.0;
 
 const PLATEAU_RADIUS: f32 = 4.0;
@@ -27,7 +28,7 @@ const BUBBLE_MOVEMENT_SPEED: f32 = 0.3;
 const BUBBLE_EFFECT_OXYGEN_INCREASE: f32 = 2.0;
 const BUBBLE_EFFECT_OXYGEN_DECREASE_SMALL: f32 = 1.0;
 const BUBBLE_EFFECT_OXYGEN_DECREASE_BIG: f32 = 4.0;
-const BUBBLE_EFFECT_FREEZE_DURATION: f32 = 0.6;
+const BUBBLE_EFFECT_FREEZE_DURATION: f32 = 0.8;
 #[derive(Resource)]
 struct BubbleFreezeEffect {
     time_remaining: f32,
@@ -124,6 +125,7 @@ fn main() {
                 handle_bubble_hit,
                 run_bubble_freeze_timer,
                 clear_old_sounds,
+                enforce_plateau_limits,
             ),
         )
         .add_event::<GameOverEvent>()
@@ -400,7 +402,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
 
     // create light
-
     commands.insert_resource(AmbientLight {
         color: ROYAL_BLUE.into(),
         brightness: 100.0,
@@ -458,6 +459,26 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
+//effecgively doubles the oxygen loss when outside the plateau
+fn enforce_plateau_limits(
+    player_transform: Single<&Transform, With<Player>>,
+    mut oxygen_level: Single<&mut OxygenLevel>,
+    time: Res<Time>,
+) {
+    let player_transform = player_transform.into_inner();
+    //if the player is ever attached anywhere this needs changing
+    let player_coordinates_2d = Vec2::from_array([
+        player_transform.translation.x,
+        player_transform.translation.z,
+    ]);
+
+    //info!("player translation 2d: {:?}", player_coordinates_2d);
+
+    if player_coordinates_2d.length_squared() > powf(PLATEAU_RADIUS, 2.0) {
+        oxygen_level.0 -= time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND;
+    } 
+}
+
 fn clear_old_sounds(
     mut commands: Commands,
     bubble_hit_sounds: Query<(&AudioSink, Entity), With<BubbleHitSound>>,
@@ -487,7 +508,7 @@ fn reduce_oxygen_level(
         is_game_over.0 = true;
         return;
     } else {
-        oxygen_level.0 = oxygen_level.0 - (time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND);
+        oxygen_level.0 -= time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND;
         info!("remaining oxygen: {}", oxygen_level.0);
     }
 }
