@@ -8,20 +8,36 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-const PLAYER_MOVEMENT_SPEED: f32 = 10.0;
+const PLAYER_MOVEMENT_SPEED: f32 = 7.0;
 const PLAYER_RADIUS: f32 = 0.35;
-const PLAYER_OXYGEN_START_SUPPLY: f32 = 100.0;
+const PLAYER_OXYGEN_START_SUPPLY: f32 = 10.0;
 const PLAYER_OXYGEN_DECREASE_PER_SECOND: f32 = 1.0;
+
 const BUBBLE_RADIUS: f32 = 0.6; //defines size of the bubbles
 const BUBBLE_SPAWN_RADIUS: f32 = 6.0; //defines the radius of the circle on which bubbles are spawned
 const BUBBLE_HOVER_OFFSET: f32 = 0.25; //added to player_translation.y, so bubbles are slightly higher than player mesh; emphasizes transparency
-const BUBBLE_MOVEMENT_SPEED: f32 = 0.2;
-const GAME_OVER_SCREEN_DISTANCE: f32 = 1.5;
+const BUBBLE_SPAWN_INTERVAL: f32 = 0.4; // spwan a bubble every <Spawn-interval> seconds
+const BUBBLE_MOVEMENT_SPEED: f32 = 0.3;
+const BUBBLE_EFFECT_OXYGEN_INCREASE: f32 = 2.0;
+const BUBBLE_EFFECT_OXYGEN_DECREASE_SMALL: f32 = 1.0;
+const BUBBLE_EFFECT_OXYGEN_DECREASE_BIG: f32 = 4.0;
+const BUBBLE_EFFECT_FREEZE_DURATION: f32 = 0.6;
+#[derive(Resource)]
+struct BubbleFreezeEffect {
+    time_remaining: f32,
+}
+
+const GAME_OVER_SCREEN_DISTANCE: f32 = 1.2;
 
 const ASSET_SCALE: f32 = 0.3; //we scale all 3D models with this because of reasons
 
 #[derive(Event)]
 struct GameOverEvent;
+
+#[derive(Event)]
+struct BubbleHitEvent {
+    bubble_type: BubbleType,
+}
 
 #[derive(Resource)]
 struct IsGameOver(bool);
@@ -33,7 +49,9 @@ struct Player;
 struct Velocity(Vec2);
 
 #[derive(Component)]
-struct Bubble;
+struct Bubble {
+    bubble_type: BubbleType,
+}
 
 #[derive(Component)]
 struct Environment;
@@ -51,7 +69,7 @@ struct AssetsLoadingGltf(HashMap<String, Handle<Gltf>>);
 //the derive above is needed so we can use the enum as a key in the HashMap
 //Debug is for logging
 enum BubbleType {
-    Regular, //Oxygon
+    Regular, //Oxygen
     Blood,   //Death
     Dirt,
     Freeze,
@@ -71,7 +89,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(LogDiagnosticsPlugin::default())
         .insert_resource(BubbleSpawnTimer(Timer::from_seconds(
-            0.2,
+            BUBBLE_SPAWN_INTERVAL,
             TimerMode::Repeating,
         )))
         .add_systems(Startup, setup)
@@ -92,9 +110,12 @@ fn main() {
                 reduce_oxygen_level,
                 play_game_over_sound,
                 show_game_over_screen,
+                handle_bubble_hit,
+                run_bubble_freeze_timer,
             ),
         )
         .add_event::<GameOverEvent>()
+        .add_event::<BubbleHitEvent>()
         .run();
 }
 
@@ -122,6 +143,7 @@ fn on_asset_loaded(
                     let asset_name = gltf_handle.0.to_string();
                     match asset_name.as_str() {
                         "player_character" => {
+                            //create mesh and add as child of player entity
                             let player_character_id = commands
                                 .spawn((
                                     SceneRoot(gltf_asset.default_scene.clone().unwrap()),
@@ -132,6 +154,17 @@ fn on_asset_loaded(
                             commands
                                 .entity(*player_entity)
                                 .add_child(player_character_id);
+
+                            //start animation
+                            //screw this; there is not reasonable example of how to get this going
+                            /*
+                            for mut player in &mut animation_players {
+                                let (graph, node_indices) =
+                                    AnimationGraph::from_clips(gltf_asset.animations.clone());
+
+                                player.play(node_indices[0]);
+                            }
+                             */
                         }
 
                         "alge" => {
@@ -239,6 +272,7 @@ fn show_game_over_screen(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_transform: Single<&Transform, With<Camera3d>>,
+    player_entity: Single<Entity, With<Player>>,
 ) {
     let mut is_game_over = false;
     for _event in game_over_event_reader.read() {
@@ -265,21 +299,22 @@ fn show_game_over_screen(
     let screen_location =
         camera_transform.translation + camera_transform.forward() * GAME_OVER_SCREEN_DISTANCE;
 
-    info!(
-        "camera rotXYZ: {:?}",
-        camera_transform.rotation.to_euler(EulerRot::XYZ)
-    );
+    let game_over_screen_id = commands
+        .spawn((
+            Mesh3d(screen_mesh_handle.clone()),
+            MeshMaterial3d(texture_handle.clone()),
+            Transform::from_translation(screen_location).with_rotation(Quat::from_euler(
+                EulerRot::XYZ,
+                0.4,
+                0.0,
+                0.0,
+            )),
+        ))
+        .id();
 
-    commands.spawn((
-        Mesh3d(screen_mesh_handle.clone()),
-        MeshMaterial3d(texture_handle.clone()),
-        Transform::from_translation(screen_location).with_rotation(Quat::from_euler(
-            EulerRot::XYZ,
-            0.4,
-            0.0,
-            0.0,
-        )),
-    ));
+    commands
+        .entity(player_entity.into_inner())
+        .add_child(game_over_screen_id);
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -299,42 +334,47 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Camera3d::default(),
                 Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
-            
-            parent.spawn(
-                (SpotLight {                    
+
+            parent.spawn((
+                SpotLight {
                     color: GREY.into(),
-                    intensity: 500_000.0,  
+                    intensity: 500_000.0,
                     range: 5.0,
-                    radius: 10.0, 
-                    inner_angle: 80.0,  
-                    shadows_enabled: true,       
-                    ..Default::default()             
+                    radius: 10.0,
+                    inner_angle: 80.0,
+                    shadows_enabled: true,
+                    ..Default::default()
                 },
                 Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
             ));
 
-            parent.spawn(
-                (SpotLight {
-                    intensity: 100_000.0,  
+            parent.spawn((
+                SpotLight {
+                    color: WHITE.into(),
+                    intensity: 100_000.0,
                     range: GAME_OVER_SCREEN_DISTANCE * 2.0,
-                    radius: 10.0, 
-                    inner_angle: 1.0,                                    
+                    radius: 10.0,
+                    inner_angle: 1.0,
                     outer_angle: 100.0,
                     ..Default::default()
                 },
                 Transform::from_xyz(0.0, 10.0, 3.0).looking_at(camera_direction, Vec3::Y),
             ));
-             
         });
 
     // create light
-    
+
     commands.insert_resource(AmbientLight {
         color: ROYAL_BLUE.into(),
         brightness: 100.0,
-    }); 
-   
+    });
+
+    // create flag resources
     commands.insert_resource(IsGameOver(false));
+
+    commands.insert_resource(BubbleFreezeEffect {
+        time_remaining: 0.0,
+    });
 
     info!("init loading assets...");
 
@@ -349,8 +389,14 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ("plateau".into(), asset_server.load("Plateau.glb")),
         ("bubble_rot".into(), asset_server.load("Bubble Rot.glb")),
         ("bubble_dirt".into(), asset_server.load("Bubble Dirt.glb")),
-        ("bubble_freeze".into(), asset_server.load("Bubble Freeze.glb")),
-        ("bubble_regular".into(), asset_server.load("Bubble Regular.glb")),
+        (
+            "bubble_freeze".into(),
+            asset_server.load("Bubble Freeze.glb"),
+        ),
+        (
+            "bubble_regular".into(),
+            asset_server.load("Bubble Regular.glb"),
+        ),
     ])));
 
     info!("player character should load now...");
@@ -374,7 +420,7 @@ fn reduce_oxygen_level(
     }
 
     oxygen_level.0 = oxygen_level.0 - (time.delta_secs() * PLAYER_OXYGEN_DECREASE_PER_SECOND);
-    info!("remaining oxygen: {}", oxygen_level.0);
+    //info!("remaining oxygen: {}", oxygen_level.0);
 
     if !is_game_over.0 && oxygen_level.0 <= 0.0_f32 {
         game_over_event_writer.send(GameOverEvent {});
@@ -387,8 +433,10 @@ fn player_movement(
     mut player_transform: Single<&mut Transform, With<Player>>,
     time: Res<Time>,
     is_game_over: Res<IsGameOver>,
+    bubble_freeze_effect: Res<BubbleFreezeEffect>,
 ) {
-    if is_game_over.0 {
+    //block input after game over or when frozen
+    if is_game_over.0 || bubble_freeze_effect.time_remaining > 0.0 {
         return;
     }
 
@@ -462,9 +510,24 @@ fn bubble_spawns(
 
         commands.spawn((
             Transform::from_translation(spawn_location).with_scale(Vec3::splat(BUBBLE_RADIUS)),
-            Bubble,
             Velocity(bubble_movement_direction),
             SceneRoot(bubble_models.0.get(&bubble_type).unwrap().clone().unwrap()),
+            MeshMaterial3d::<StandardMaterial>::default(),        
+            PointLight{
+                color: match &bubble_type {
+                    BubbleType::Blood => RED.into(),
+                    BubbleType::Dirt => GREEN.into(),
+                    BubbleType::Freeze => WHITE.into(),
+                    BubbleType::Regular => YELLOW.into()
+                },
+                radius: BUBBLE_RADIUS,
+                intensity: 10_000.0,
+                range: BUBBLE_RADIUS * 1.2,
+                ..Default::default()
+            },
+            Bubble {
+                bubble_type: bubble_type,
+            },
         ));
     }
 }
@@ -480,17 +543,57 @@ fn move_bubbles(
     }
 }
 
+fn handle_bubble_hit(
+    mut bubble_hit_event_reader: EventReader<BubbleHitEvent>,
+    mut oxygen_level: Single<&mut OxygenLevel>,
+    mut bubble_freeze_effect: ResMut<BubbleFreezeEffect>,
+) {
+    for event in bubble_hit_event_reader.read() {
+        match event.bubble_type {
+            BubbleType::Regular => {
+                oxygen_level.0 += BUBBLE_EFFECT_OXYGEN_INCREASE;
+            }
+            BubbleType::Dirt => {
+                oxygen_level.0 -= BUBBLE_EFFECT_OXYGEN_DECREASE_SMALL;
+            }
+            BubbleType::Freeze => {
+                bubble_freeze_effect.time_remaining = BUBBLE_EFFECT_FREEZE_DURATION;
+                oxygen_level.0 += BUBBLE_EFFECT_OXYGEN_INCREASE * 0.5;
+            }
+            BubbleType::Blood => {
+                oxygen_level.0 -= BUBBLE_EFFECT_OXYGEN_DECREASE_BIG;
+            }
+        }
+    }
+}
+
+fn run_bubble_freeze_timer(time: Res<Time>, mut bubble_freeze_effect: ResMut<BubbleFreezeEffect>) {
+    if bubble_freeze_effect.time_remaining > 0.0 {
+        bubble_freeze_effect.time_remaining -= time.delta_secs();
+    }
+}
+
 fn check_collisions(
     mut commands: Commands,
     player_query: Single<&Transform, With<Player>>,
-    bubble_query: Query<(Entity, &Transform), With<Bubble>>,
+    bubble_query: Query<(Entity, &Transform, &Bubble)>,
+    mut bubble_event_write: EventWriter<BubbleHitEvent>,
 ) {
     let player_transform = player_query.into_inner();
     let player_sphere = BoundingSphere::new(player_transform.translation, PLAYER_RADIUS);
-    for (bubble_entity, bubble_transform) in &bubble_query {
+    for (bubble_entity, bubble_transform, bubble) in &bubble_query {
         let bubble_sphere = BoundingSphere::new(bubble_transform.translation, BUBBLE_RADIUS);
         if bubble_sphere.intersects(&player_sphere) {
             commands.entity(bubble_entity).despawn();
+            info!("hit by bubble of type {:?}", bubble.bubble_type);
+            bubble_event_write.send(BubbleHitEvent {
+                bubble_type: match bubble.bubble_type {
+                    BubbleType::Regular => BubbleType::Regular,
+                    BubbleType::Dirt => BubbleType::Dirt,
+                    BubbleType::Freeze => BubbleType::Freeze,
+                    BubbleType::Blood => BubbleType::Blood,
+                },
+            });
         }
     }
 }
